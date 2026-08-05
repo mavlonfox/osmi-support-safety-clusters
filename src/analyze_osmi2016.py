@@ -1426,7 +1426,10 @@ def write_manifest(project_root: Path, qa_dir: Path) -> None:
         path
         for parent in [project_root / "src", project_root / "data" / "processed", project_root / "outputs", qa_dir]
         for path in parent.rglob("*")
-        if path.is_file() and path.name != "reproduction_manifest.json"
+        if path.is_file()
+        and path.name != "reproduction_manifest.json"
+        and "__pycache__" not in path.parts
+        and path.suffix != ".pyc"
     )
     manifest = {
         "generated_at_note": "Deterministic analysis; wall-clock timestamp intentionally omitted",
