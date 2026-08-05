@@ -58,8 +58,9 @@ Der analysierte Stand ist durch folgenden SHA-256-Fingerprint fixiert:
 0bec458b0724cc375a17eb2db0204a9f7a786260441cf702eec210d92bd4ae4d
 ```
 
-Die Ausführung erzeugt lokal `outputs/`, `data/processed/` und `qa/`. Diese
-Ordner sind absichtlich von Git ausgeschlossen.
+Die Ausführung erzeugt ausschließlich aggregierte Artefakte in `outputs/` und
+`qa/`. Individuelle Clusterzuordnungen werden weder geschrieben noch
+veröffentlicht. Die Ausgabeordner sind absichtlich von Git ausgeschlossen.
 
 ## Datenquelle
 

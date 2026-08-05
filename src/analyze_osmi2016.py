@@ -13,11 +13,13 @@ import hashlib
 import json
 import os
 import platform
+import shutil
+import ssl
 import sys
 import urllib.request
 import zipfile
 from dataclasses import dataclass
-from itertools import combinations
+from itertools import combinations, permutations
 from pathlib import Path
 from typing import Any, Callable
 
@@ -32,6 +34,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import sklearn
+import certifi
 from matplotlib.lines import Line2D
 from sklearn.cluster import KMeans
 from sklearn.decomposition import TruncatedSVD
@@ -121,7 +124,7 @@ FEATURES: tuple[FeatureSpec, ...] = (
         "leave_ease",
         "If a mental health issue prompted you to request a medical leave from work, asking for that leave would be:",
         "Krankheitsurlaub leicht",
-        "Psychologische Sicherheit",
+        "Wahrgenommene Gesprächssicherheit",
         {
             "Very easy": 1.0,
             "Somewhat easy": 0.75,
@@ -134,43 +137,43 @@ FEATURES: tuple[FeatureSpec, ...] = (
     FeatureSpec(
         "no_mental_consequences",
         "Do you think that discussing a mental health disorder with your employer would have negative consequences?",
-        "Keine negativen Folgen (mental)",
-        "Psychologische Sicherheit",
+        "Keine negativen Folgen (psychisch)",
+        "Wahrgenommene Gesprächssicherheit",
         {"No": 1.0, "Maybe": 0.5, "Yes": 0.0},
     ),
     FeatureSpec(
         "no_physical_consequences",
         "Do you think that discussing a physical health issue with your employer would have negative consequences?",
         "Keine negativen Folgen (körperlich)",
-        "Psychologische Sicherheit",
+        "Wahrgenommene Gesprächssicherheit",
         {"No": 1.0, "Maybe": 0.5, "Yes": 0.0},
     ),
     FeatureSpec(
         "coworker_comfort",
         "Would you feel comfortable discussing a mental health disorder with your coworkers?",
         "Gespräch mit Kolleg:innen",
-        "Psychologische Sicherheit",
+        "Wahrgenommene Gesprächssicherheit",
         {"Yes": 1.0, "Maybe": 0.5, "No": 0.0},
     ),
     FeatureSpec(
         "supervisor_comfort",
         "Would you feel comfortable discussing a mental health disorder with your direct supervisor(s)?",
         "Gespräch mit Führungskraft",
-        "Psychologische Sicherheit",
+        "Wahrgenommene Gesprächssicherheit",
         {"Yes": 1.0, "Maybe": 0.5, "No": 0.0},
     ),
     FeatureSpec(
         "parity",
         "Do you feel that your employer takes mental health as seriously as physical health?",
-        "Mentale = körperliche Gesundheit",
-        "Psychologische Sicherheit",
+        "Psychische = körperliche Gesundheit",
+        "Wahrgenommene Gesprächssicherheit",
         {"Yes": 1.0, "I don't know": 0.5, "No": 0.0},
     ),
     FeatureSpec(
         "no_observed_consequences",
         "Have you heard of or observed negative consequences for co-workers who have been open about mental health issues in your workplace?",
         "Keine beobachteten Folgen",
-        "Psychologische Sicherheit",
+        "Wahrgenommene Gesprächssicherheit",
         {"No": 1.0, "Yes": 0.0},
     ),
 )
@@ -194,7 +197,18 @@ def ensure_dataset(raw_dir: Path, download: bool = True) -> Path:
             raise FileNotFoundError(f"Rohdatei fehlt: {csv_path}")
         if not archive_path.exists():
             print(f"Lade {DATA_URL}")
-            urllib.request.urlretrieve(DATA_URL, archive_path)
+            temporary_download = archive_path.with_suffix(".download")
+            request = urllib.request.Request(
+                DATA_URL,
+                headers={"User-Agent": "osmi-support-safety-clusters/1.0"},
+            )
+            tls_context = ssl.create_default_context(cafile=certifi.where())
+            with (
+                urllib.request.urlopen(request, context=tls_context, timeout=120) as response,
+                temporary_download.open("wb") as target,
+            ):
+                shutil.copyfileobj(response, target)
+            temporary_download.replace(archive_path)
         with zipfile.ZipFile(archive_path) as archive:
             if CSV_NAME not in archive.namelist():
                 raise RuntimeError(f"{CSV_NAME} nicht im Archiv gefunden")
@@ -343,7 +357,9 @@ def block_profiles(
     name_by_id: dict[str, str],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     formal_codes = [f.code for f in FEATURES if f.block.startswith("Formale")]
-    safety_codes = [f.code for f in FEATURES if f.block.startswith("Psychologische")]
+    safety_codes = [
+        f.code for f in FEATURES if f.block == "Wahrgenommene Gesprächssicherheit"
+    ]
     frame = scores.copy()
     frame["profile_id"] = profile_ids
     blocks: list[dict[str, Any]] = []
@@ -360,8 +376,8 @@ def block_profiles(
                 "profile_name": label,
                 "n": len(group),
                 "formal_support_navigation": formal,
-                "psychological_safety": safety,
-                "formal_minus_safety_gap": formal - safety,
+                "perceived_conversation_safety": safety,
+                "formal_minus_conversation_safety_gap": formal - safety,
                 "overall_support_score": group[[f.code for f in FEATURES]].to_numpy().mean(),
             }
         )
@@ -661,6 +677,20 @@ def gower_robustness(
     distances = pairwise_distances(coded, metric="hamming")
     labels, medoids, objective = alternating_kmedoids(distances, k=k)
     counts = np.bincount(labels, minlength=k)
+    primary_values = sorted(np.unique(primary_labels).tolist())
+    alternative_values = sorted(np.unique(labels).tolist())
+    best_match_n = max(
+        int(
+            np.sum(
+                np.array(
+                    [dict(zip(alternative_values, mapped))[int(value)] for value in labels]
+                )
+                == primary_labels
+            )
+        )
+        for mapped in permutations(primary_values)
+    )
+    changed_n = int(len(labels) - best_match_n)
     metrics = pd.DataFrame(
         [
             {
@@ -670,6 +700,8 @@ def gower_robustness(
                     distances, labels, metric="precomputed"
                 ),
                 "ari_vs_primary_svd_kmeans": adjusted_rand_score(primary_labels, labels),
+                "changed_n_after_optimal_label_mapping": changed_n,
+                "changed_share_after_optimal_label_mapping": changed_n / len(labels),
                 "objective_sum_distance_to_medoid": objective,
                 "min_cluster_n": int(counts.min()),
                 "min_cluster_share": float(counts.min() / len(labels)),
@@ -827,7 +859,7 @@ def figure_missingness(missingness: pd.DataFrame, figures_dir: Path) -> None:
     fig.text(
         0.01,
         0.005,
-        f"Quelle: OSMI (2016). Fehlende Werte werden als {SKIPPED} kodiert.",
+        "Hinweis: Übersprungene Optionsfragen bleiben als ‚strukturell nicht erhoben‘ erhalten.",
         fontsize=7,
         color="#555555",
     )
@@ -835,7 +867,9 @@ def figure_missingness(missingness: pd.DataFrame, figures_dir: Path) -> None:
     save_figure(fig, figures_dir, "01_missingness_selected_features")
 
 
-def figure_model_selection(metrics: pd.DataFrame, figures_dir: Path) -> None:
+def figure_model_selection(
+    metrics: pd.DataFrame, figures_dir: Path, bootstrap_reps: int
+) -> None:
     fig, axes = plt.subplots(1, 3, figsize=(10.2, 3.4))
     k = metrics["k"]
     axes[0].plot(
@@ -897,7 +931,7 @@ def figure_model_selection(metrics: pd.DataFrame, figures_dir: Path) -> None:
     fig.text(
         0.01,
         0.005,
-        "Quelle: Eigene Berechnung auf Basis OSMI (2016). ARI: 80%-Subsamples, 20 Wiederholungen.",
+        f"Hinweis: ARI basiert auf 80-%-Subsamples mit {bootstrap_reps} Wiederholungen.",
         fontsize=7,
         color="#555555",
     )
@@ -953,7 +987,7 @@ def figure_svd_map(
     fig.text(
         0.01,
         0.005,
-        "Quelle: Eigene Berechnung auf Basis OSMI (2016). Überlappung ist sichtbar und wird nicht als harte Typgrenze interpretiert.",
+        "Hinweis: Sichtbare Überlappung ist nicht als harte Typgrenze zu interpretieren.",
         fontsize=7,
         color="#555555",
     )
@@ -994,7 +1028,7 @@ def figure_profile_heatmap(item_profiles: pd.DataFrame, figures_dir: Path) -> No
             )
     ax.axhline(4.5, color="#111111", linewidth=1.2)
     fig.suptitle(
-        "Deskriptive Unterstützungs- und Sicherheitsprofile",
+        "Deskriptive Unterstützungs- und Gesprächssicherheitsprofile",
         x=0.01,
         y=0.985,
         ha="left",
@@ -1012,7 +1046,7 @@ def figure_profile_heatmap(item_profiles: pd.DataFrame, figures_dir: Path) -> No
     fig.text(
         0.01,
         0.005,
-        "Quelle: Eigene Berechnung auf Basis OSMI (2016). Trennlinie: formale Unterstützung/Navigation vs. psychologische Sicherheit.",
+        "Hinweis: Trennlinie zwischen formaler Unterstützung/Navigation und wahrgenommener Gesprächssicherheit.",
         fontsize=7,
         color="#555555",
     )
@@ -1067,7 +1101,7 @@ def figure_posthoc_context(posthoc: pd.DataFrame, figures_dir: Path) -> None:
     fig.text(
         0.01,
         0.005,
-        "Quelle: Eigene Berechnung auf Basis OSMI (2016). Nenner stehen in der Ergebnistabelle; Zellen < 20 würden unterdrückt.",
+        "Hinweis: Nenner stehen in der Ergebnistabelle; Zellen < 20 würden unterdrückt.",
         fontsize=7,
         color="#555555",
     )
@@ -1110,7 +1144,7 @@ def figure_sensitivity(sensitivity: pd.DataFrame, figures_dir: Path) -> None:
     fig.text(
         0.01,
         0.005,
-        "Quelle: Eigene Berechnung auf Basis OSMI (2016). Komponenten 8/12/16 erklären rund 54/69/80 % Varianz.",
+        "Hinweis: 8/12/16 Komponenten erklären rund 54/69/80 % der Varianz.",
         fontsize=7,
         color="#555555",
     )
@@ -1174,6 +1208,7 @@ def write_summary(
     k3_block_table: pd.DataFrame,
     gower_metrics: pd.DataFrame,
     sensitivity: pd.DataFrame,
+    bootstrap_reps: int,
 ) -> None:
     selected = metrics.loc[metrics["k"].eq(selected_k)].iloc[0]
     tables_relative = tables_dir.relative_to(outputs_dir.parent)
@@ -1210,7 +1245,7 @@ def write_summary(
             "bootstrap_ari_sd": float(selected["bootstrap_ari_sd"]),
             "bootstrap_definition": (
                 "mean pairwise adjusted Rand index across full-sample assignments "
-                "from 20 independent 80% subsample fits"
+                f"from {bootstrap_reps} independent 80% subsample fits"
             ),
             "cluster_sizes_unordered": selected["cluster_sizes_unordered"],
         },
@@ -1231,8 +1266,8 @@ def write_summary(
     for row in block_table.itertuples(index=False):
         profile_lines.append(
             f"- {row.profile_name}: n = {row.n}; formale Unterstützung/Navigation "
-            f"{row.formal_support_navigation:.3f}; psychologische Sicherheit "
-            f"{row.psychological_safety:.3f}; Gesamtwert {row.overall_support_score:.3f}."
+            f"{row.formal_support_navigation:.3f}; wahrgenommene Gesprächssicherheit "
+            f"{row.perceived_conversation_safety:.3f}; Gesamtwert {row.overall_support_score:.3f}."
         )
     k3_lines = []
     for row in k3_block_table.itertuples(index=False):
@@ -1240,8 +1275,8 @@ def write_summary(
             continue
         k3_lines.append(
             f"- {row.profile_name}: n = {row.n}; formale Unterstützung/Navigation "
-            f"{row.formal_support_navigation:.3f}; psychologische Sicherheit "
-            f"{row.psychological_safety:.3f}."
+            f"{row.formal_support_navigation:.3f}; wahrgenommene Gesprächssicherheit "
+            f"{row.perceived_conversation_safety:.3f}."
         )
     markdown = f"""# Reproduzierbare OSMI-2016-Analyse – Ergebnisnotiz
 
@@ -1265,7 +1300,7 @@ def write_summary(
   {selected['silhouette_original_onehot_euclidean']:.3f}; Davies–Bouldin:
   {selected['davies_bouldin_reduced']:.3f}.
 - Stabilität: mittlere paarweise ARI
-  {selected['bootstrap_ari_mean']:.3f} (20 unabhängige 80%-Subsamples,
+  {selected['bootstrap_ari_mean']:.3f} ({bootstrap_reps} unabhängige 80%-Subsamples,
   Vorhersage jeweils für alle 1.146 Fälle).
 
 ## Profile
@@ -1378,6 +1413,7 @@ def write_manifest(project_root: Path, qa_dir: Path) -> None:
             "pandas": pd.__version__,
             "scikit_learn": sklearn.__version__,
             "matplotlib": mpl.__version__,
+            "certifi": certifi.__version__,
         },
         "random_state": RANDOM_STATE,
         "files": [
@@ -1508,20 +1544,6 @@ def main() -> None:
         tables_dir / "k3_diagnostic_raw_answer_distributions.csv", index=False
     )
 
-    participant_ids = np.array([f"P{i:04d}" for i in range(1, len(employees) + 1)])
-    assignments = pd.DataFrame(
-        {
-            "participant_id_pseudonymous": participant_ids,
-            "profile_id": profile_ids,
-            "profile_name": [name_by_id[pid] for pid in profile_ids],
-            "svd_component_1": reduced[:, 0],
-            "svd_component_2": reduced[:, 1],
-            "formal_support_navigation_score": scores[[f.code for f in FEATURES[:5]]].mean(axis=1).to_numpy(),
-            "psychological_safety_score": scores[[f.code for f in FEATURES[5:]]].mean(axis=1).to_numpy(),
-        }
-    )
-    assignments.to_csv(processed_dir / "participant_cluster_assignments.csv", index=False)
-
     sensitivity = sensitivity_analysis(
         one_hot,
         primary_raw_labels,
@@ -1535,20 +1557,14 @@ def main() -> None:
         tables_dir / "robustness_without_options_known.csv", index=False
     )
 
-    gower_metrics, gower_labels = gower_robustness(
+    gower_metrics, _gower_labels = gower_robustness(
         feature_frame, primary_raw_labels, selected_k
     )
     gower_metrics.to_csv(tables_dir / "robustness_gower_kmedoids.csv", index=False)
-    pd.DataFrame(
-        {
-            "participant_id_pseudonymous": participant_ids,
-            "gower_kmedoids_raw_cluster": gower_labels,
-        }
-    ).to_csv(processed_dir / "gower_kmedoids_assignments.csv", index=False)
 
     configure_plots()
     figure_missingness(missingness, figures_dir)
-    figure_model_selection(metrics, figures_dir)
+    figure_model_selection(metrics, figures_dir, args.bootstrap_reps)
     figure_svd_map(reduced, svd, profile_ids, name_by_id, figures_dir)
     figure_profile_heatmap(item_table, figures_dir)
     figure_posthoc_context(posthoc, figures_dir)
@@ -1565,6 +1581,7 @@ def main() -> None:
         k3_blocks,
         gower_metrics,
         sensitivity,
+        args.bootstrap_reps,
     )
     write_validation_report(
         qa_dir,
