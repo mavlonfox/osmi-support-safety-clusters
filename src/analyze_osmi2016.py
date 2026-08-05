@@ -36,6 +36,7 @@ import pandas as pd
 import sklearn
 import certifi
 from matplotlib.lines import Line2D
+from matplotlib.ticker import FuncFormatter
 from sklearn.cluster import KMeans
 from sklearn.decomposition import TruncatedSVD
 from sklearn.metrics import (
@@ -812,6 +813,14 @@ def configure_plots() -> None:
     )
 
 
+def format_decimal_de(value: float, decimals: int = 1) -> str:
+    """Formatiert Dezimalzahlen für deutschsprachige Abbildungen."""
+    return f"{value:.{decimals}f}".replace(".", ",")
+
+
+GERMAN_TICK_FORMATTER = FuncFormatter(lambda value, _position: f"{value:g}".replace(".", ","))
+
+
 def save_figure(fig: plt.Figure, figures_dir: Path, stem: str) -> None:
     fig.savefig(
         figures_dir / f"{stem}.png",
@@ -837,9 +846,15 @@ def figure_missingness(missingness: pd.DataFrame, figures_dir: Path) -> None:
         edgecolor="#222222",
         linewidth=0.6,
     )
-    ax.bar_label(bars, fmt="%.1f %%", padding=3, fontsize=8)
+    ax.bar_label(
+        bars,
+        labels=[f"{format_decimal_de(bar.get_width())} %" for bar in bars],
+        padding=3,
+        fontsize=8,
+    )
     ax.set_xlim(0, max(13, ordered["missing_share_before_encoding"].max() * 115))
     ax.set_xlabel("Fehlende Rohwerte (%)")
+    ax.xaxis.set_major_formatter(GERMAN_TICK_FORMATTER)
     fig.suptitle(
         "Fehlende Werte in den ausgewählten Arbeitgebermerkmalen",
         x=0.01,
@@ -918,6 +933,7 @@ def figure_model_selection(
     for ax in axes:
         ax.set_xticks(k)
         ax.set_xlabel("Clusterzahl k")
+        ax.yaxis.set_major_formatter(GERMAN_TICK_FORMATTER)
         ax.grid(axis="y")
         ax.set_axisbelow(True)
     fig.suptitle("Vergleich der Clusterlösungen k = 2 bis k = 6", x=0.01, ha="left", fontsize=12)
@@ -965,8 +981,14 @@ def figure_svd_map(
             label=legend_names.get(pid, name_by_id[pid]),
             **styles.get(pid, {}),
         )
-    ax.set_xlabel(f"SVD-Komponente 1 ({svd.explained_variance_ratio_[0] * 100:.1f} % Varianz)")
-    ax.set_ylabel(f"SVD-Komponente 2 ({svd.explained_variance_ratio_[1] * 100:.1f} % Varianz)")
+    ax.set_xlabel(
+        f"SVD-Komponente 1 ({format_decimal_de(svd.explained_variance_ratio_[0] * 100)} % Varianz)"
+    )
+    ax.set_ylabel(
+        f"SVD-Komponente 2 ({format_decimal_de(svd.explained_variance_ratio_[1] * 100)} % Varianz)"
+    )
+    ax.xaxis.set_major_formatter(GERMAN_TICK_FORMATTER)
+    ax.yaxis.set_major_formatter(GERMAN_TICK_FORMATTER)
     fig.suptitle(
         "Zweidimensionale Projektion der Unterstützungsprofile",
         x=0.01,
@@ -1076,10 +1098,11 @@ def figure_posthoc_context(posthoc: pd.DataFrame, figures_dir: Path) -> None:
         values = pivot[pid].to_numpy()
         ax.scatter(values, y + offsets[pid], s=42, linewidth=1.0, label=pid, **styles[pid])
         for value, yy in zip(values, y + offsets[pid]):
-            ax.text(value + 1.2, yy, f"{value:.1f}", va="center", fontsize=7)
+            ax.text(value + 1.2, yy, format_decimal_de(value), va="center", fontsize=7)
     ax.set_yticks(y, labels=[labels[code] for code in outcomes])
     ax.set_xlim(0, max(70, np.nanmax(pivot.to_numpy()) + 8))
     ax.set_xlabel("Anteil (%)")
+    ax.xaxis.set_major_formatter(GERMAN_TICK_FORMATTER)
     fig.suptitle(
         "Aggregierte sensible Kontextindikatoren nach Profil",
         x=0.01,
@@ -1136,6 +1159,7 @@ def figure_sensitivity(sensitivity: pd.DataFrame, figures_dir: Path) -> None:
     for ax in axes:
         ax.set_xticks(sorted(sensitivity["n_components"].unique()))
         ax.set_xlabel("SVD-Komponenten")
+        ax.yaxis.set_major_formatter(GERMAN_TICK_FORMATTER)
         ax.grid(axis="y")
         ax.set_axisbelow(True)
     axes[0].set_ylabel("Koeffizient")
