@@ -1410,7 +1410,7 @@ def write_validation_report(
         "",
         "## Erforderliche Berichtscaveats",
         "",
-        "- Querschnittliche, freiwillige Online-Stichprobe; keine Repräsentativität.",
+        "- Querschnittsdaten von 2016; Rekrutierungsverfahren und Grundgesamtheit sind in der Datensatzdokumentation nicht ausgewiesen; keine Repräsentativität.",
         "- Selbstauskunft und gemeinsame Erhebungsmethode; keine Kausalität.",
         "- K-Means in einem SVD-Raum ist eine pragmatische, prüfungsnahe Näherung für kategoriale Daten.",
         "- Niedrige Silhouette: Profile überlappen deutlich.",
