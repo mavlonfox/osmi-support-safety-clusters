@@ -326,8 +326,8 @@ def ordered_profile_labels(
     ordered = overall.sort_values(ascending=False).index.tolist()
     if len(ordered) == 2:
         names = [
-            "Profil A – sichtbar und vergleichsweise sicher",
-            "Profil B – intransparent und zurückhaltend",
+            "Profil A – vergleichsweise sichtbare und ansprechbare Unterstützung",
+            "Profil B – wenig sichtbare und schwer ansprechbare Unterstützung",
         ]
     else:
         names = [f"Profil {chr(65 + i)}" for i in range(len(ordered))]
@@ -461,9 +461,9 @@ def ordered_k3_labels(
     ordered = overall.sort_values(ascending=False).index.tolist()
     ids = ["K3-A", "K3-B", "K3-C"]
     names = [
-        "K3-A – navigierbar und vergleichsweise sicher",
-        "K3-B – institutionell unklar und ambivalent",
-        "K3-C – exponiert und sanktionsnah",
+        "K3-A – sichtbare und ansprechbare Unterstützung",
+        "K3-B – institutionell unklare Unterstützung",
+        "K3-C – wenig sichtbare und schwer ansprechbare Unterstützung",
     ]
     id_map = {int(raw): pid for raw, pid in zip(ordered, ids)}
     name_by_id = dict(zip(ids, names))
@@ -563,6 +563,43 @@ def sensitivity_analysis(
                 }
             )
     return pd.DataFrame(rows)
+
+
+def ablation_without_options_known(
+    feature_frame: pd.DataFrame,
+    primary_labels: np.ndarray,
+) -> pd.DataFrame:
+    """Prüft die mögliche Doppelabbildung strukturell übersprungener Optionen."""
+
+    retained = [feature for feature in FEATURES if feature.code != "options_known"]
+    model_frame = feature_frame[[feature.raw for feature in retained]].copy()
+    model_frame.columns = [feature.code for feature in retained]
+    one_hot = OneHotEncoder(
+        handle_unknown="ignore", sparse_output=False, dtype=np.float64
+    ).fit_transform(model_frame)
+    svd = TruncatedSVD(n_components=12, random_state=RANDOM_STATE)
+    reduced = svd.fit_transform(one_hot)
+    model = KMeans(n_clusters=2, n_init=50, random_state=RANDOM_STATE).fit(reduced)
+    labels = model.labels_
+    counts = np.bincount(labels, minlength=2)
+    return pd.DataFrame(
+        [
+            {
+                "analysis": "Ablation ohne Kenntnis der Versorgungsoptionen",
+                "retained_questions": len(retained),
+                "one_hot_dimensions": one_hot.shape[1],
+                "svd_components": 12,
+                "explained_variance_ratio": svd.explained_variance_ratio_.sum(),
+                "silhouette_original_onehot_euclidean": silhouette_score(
+                    one_hot, labels
+                ),
+                "silhouette_reduced_euclidean": silhouette_score(reduced, labels),
+                "davies_bouldin_reduced": davies_bouldin_score(reduced, labels),
+                "ari_vs_primary_model": adjusted_rand_score(primary_labels, labels),
+                "cluster_sizes_unordered": ";".join(map(str, counts.tolist())),
+            }
+        ]
+    )
 
 
 def alternating_kmedoids(
@@ -880,6 +917,10 @@ def figure_svd_map(
         "A": dict(marker="o", facecolors="#333333", edgecolors="#111111", alpha=0.46),
         "B": dict(marker="s", facecolors="none", edgecolors="#777777", alpha=0.46),
     }
+    legend_names = {
+        "A": "Profil A – sichtbar/ansprechbar",
+        "B": "Profil B – wenig sichtbar/schwer ansprechbar",
+    }
     for pid in sorted(set(profile_ids)):
         mask = profile_ids == pid
         ax.scatter(
@@ -887,13 +928,13 @@ def figure_svd_map(
             reduced[mask, 1],
             s=15,
             linewidths=0.5,
-            label=name_by_id[pid],
+            label=legend_names.get(pid, name_by_id[pid]),
             **styles.get(pid, {}),
         )
     ax.set_xlabel(f"SVD-Komponente 1 ({svd.explained_variance_ratio_[0] * 100:.1f} % Varianz)")
     ax.set_ylabel(f"SVD-Komponente 2 ({svd.explained_variance_ratio_[1] * 100:.1f} % Varianz)")
     fig.suptitle(
-        "Zweidimensionale Projektion der Beschäftigtenprofile",
+        "Zweidimensionale Projektion der Unterstützungsprofile",
         x=0.01,
         y=0.985,
         ha="left",
@@ -1101,7 +1142,7 @@ def write_chart_map(qa_dir: Path) -> None:
             "figure": "04_cluster_profile_heatmap",
             "question": "Bei welchen Arbeitgebermerkmalen unterscheiden sich die Profile?",
             "chart": "Annotierte Heatmap",
-            "takeaway": "Profil B bündelt geringe Sichtbarkeit und geringere psychologische Sicherheit.",
+            "takeaway": "Profil B bündelt wenig sichtbare und schwer ansprechbare Unterstützung.",
         },
         {
             "figure": "05_posthoc_sensitive_context",
@@ -1488,6 +1529,11 @@ def main() -> None:
         bootstrap_reps=args.sensitivity_bootstrap_reps,
     )
     sensitivity.to_csv(tables_dir / "sensitivity_svd_components.csv", index=False)
+
+    ablation = ablation_without_options_known(feature_frame, primary_raw_labels)
+    ablation.to_csv(
+        tables_dir / "robustness_without_options_known.csv", index=False
+    )
 
     gower_metrics, gower_labels = gower_robustness(
         feature_frame, primary_raw_labels, selected_k

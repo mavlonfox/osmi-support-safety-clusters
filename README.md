@@ -19,9 +19,11 @@ werden nicht veröffentlicht.
 6. Modellwahl über Originalraum-Silhouette, Mindestgröße und Stabilität aus
    20 unabhängigen 80-%-Subsamples.
 7. Sensitivität für 8/12/16 SVD-Komponenten und *k* = 2/3 prüfen.
-8. Kategoriale Gower/Hamming-Distanz mit k-Medoids als Robustheitsvergleich
+8. Die strukturell abhängige Optionsfrage entfernen und die Zuordnungen mit
+   dem Hauptmodell vergleichen.
+9. Kategoriale Gower/Hamming-Distanz mit k-Medoids als Robustheitsvergleich
    berechnen.
-9. Aggregierte Tabellen, Abbildungen und maschinenlesbare QA-Nachweise erzeugen.
+10. Aggregierte Tabellen, Abbildungen und maschinenlesbare QA-Nachweise erzeugen.
 
 Die Profile beschreiben überlappende Wahrnehmungsmuster. Sie sind weder
 Diagnosen noch natürliche Personentypen und dürfen nicht für individuelle
