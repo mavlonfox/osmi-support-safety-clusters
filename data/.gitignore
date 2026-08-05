@@ -1,0 +1,5 @@
+# Öffentliche, aber sensible OSMI-Rohdaten nicht versehentlich veröffentlichen.
+raw/*
+!raw/.gitkeep
+processed/*
+!processed/.gitkeep
